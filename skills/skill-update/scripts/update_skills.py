@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -14,6 +15,9 @@ import time
 
 DEFAULT_SOURCES_NAME = ".skill-sources.json"
 DEFAULT_REPO = "CcooLcyy/skills"
+IGNORED_DIRS = {".git", "__pycache__"}
+IGNORED_FILES = {".DS_Store"}
+IGNORED_SUFFIXES = {".pyc"}
 
 
 def _codex_home() -> str:
@@ -67,6 +71,46 @@ def _validate_skill_dir(path: str) -> None:
 def _validate_repo_path(path: str) -> None:
     if os.path.isabs(path) or os.path.normpath(path).startswith(".."):
         raise ValueError("仓库路径必须是仓库内相对路径")
+
+
+def _hash_directory(path: str) -> str:
+    hasher = hashlib.sha256()
+    for root, dirnames, filenames in os.walk(path):
+        dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
+        dirnames.sort()
+        rel_root = os.path.relpath(root, path)
+        if rel_root != ".":
+            hasher.update(b"D")
+            hasher.update(rel_root.encode("utf-8"))
+        filtered = []
+        for name in filenames:
+            if name in IGNORED_FILES:
+                continue
+            if any(name.endswith(suffix) for suffix in IGNORED_SUFFIXES):
+                continue
+            filtered.append(name)
+        for name in sorted(filtered):
+            file_path = os.path.join(root, name)
+            rel_path = os.path.relpath(file_path, path)
+            hasher.update(b"F")
+            hasher.update(rel_path.encode("utf-8"))
+            if os.path.islink(file_path):
+                hasher.update(b"L")
+                hasher.update(os.readlink(file_path).encode("utf-8"))
+                continue
+            with open(file_path, "rb") as file_handle:
+                while True:
+                    chunk = file_handle.read(8192)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _is_same_skill(dest_path: str, new_path: str) -> bool:
+    if not os.path.isdir(dest_path):
+        return False
+    return _hash_directory(dest_path) == _hash_directory(new_path)
 
 
 def _resolve_installer_path(user_path: str | None) -> str:
@@ -130,7 +174,7 @@ def _replace_skill(dest_root: str, name: str, new_path: str, keep_backup: bool) 
         shutil.rmtree(backup_path, ignore_errors=True)
 
 
-def _update_one(name: str, entry: dict, dest_root: str, args: argparse.Namespace) -> None:
+def _update_one(name: str, entry: dict, dest_root: str, args: argparse.Namespace) -> bool:
     tmp_root = tempfile.mkdtemp(prefix="skill-update-")
     try:
         stage_root = os.path.join(tmp_root, "stage")
@@ -144,7 +188,11 @@ def _update_one(name: str, entry: dict, dest_root: str, args: argparse.Namespace
             _install_from_github(entry, name, stage_root, installer_path)
         new_path = os.path.join(stage_root, name)
         _validate_skill_dir(new_path)
+        dest_path = os.path.join(dest_root, name)
+        if _is_same_skill(dest_path, new_path):
+            return False
         _replace_skill(dest_root, name, new_path, args.keep_backup)
+        return True
     finally:
         shutil.rmtree(tmp_root, ignore_errors=True)
 
@@ -249,8 +297,11 @@ def _cmd_update(args: argparse.Namespace, dest_root: str) -> int:
         if not entry:
             continue
         try:
-            _update_one(name, entry, dest_root, args)
-            print(f"更新完成: {name}")
+            updated = _update_one(name, entry, dest_root, args)
+            if updated:
+                print(f"更新完成: {name}")
+            else:
+                print(f"已是最新: {name}")
         except Exception as exc:
             errors = True
             print(f"更新失败: {name} - {exc}", file=sys.stderr)
