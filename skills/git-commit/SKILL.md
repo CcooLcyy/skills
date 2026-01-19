@@ -24,6 +24,7 @@ description: 用于在本地仓库完成 git 提交流程：分析未暂存改�
    - 按前面划分的修改点分组暂存，优先使用 `git add -p` 或逐文件暂存，确保完成暂存。
    - 每个批次暂存后展示 `git diff --cached` 并确认内容完整。
    - 暂存完成后再生成该批次提交信息，避免先写提交信息再补改动。
+   - 若存在多批次，逐批次生成提交信息草稿但先汇总，等所有批次准备完后一次性输出。
 
 4. 发现仓库提交规范
    - 查找规范与模板：`CONTRIBUTING.md`、`README.md`、`docs/`、`.gitmessage*`、`.commitlintrc*`、`commitlint.config.*`、`package.json` 中的 commitlint/commitizen 配置、`git config commit.template`。
@@ -35,6 +36,7 @@ description: 用于在本地仓库完成 git 提交流程：分析未暂存改�
    - 提交信息必须使用真实换行，禁止输出字面量 `\n` 作为换行符；标题与正文之间保留一个空行，正文每条要点独占一行。
    - 提交信息需要详细：标题概括改动主题，正文列出本批次改动点/影响范围/关键原因，确保读者无需查看 diff 也能理解变化。
    - 需要工单号或 issue id 时，主动询问并补齐。
+   - 若为多批次提交，一次性输出所有批次的提交信息候选，统一确认与调整。
 
 6. 提交
    - 使用 `git commit` 提交该批次。
