@@ -13,6 +13,7 @@ import tempfile
 import time
 
 DEFAULT_SOURCES_NAME = ".skill-sources.json"
+DEFAULT_REPO = "CcooLcyy/skills"
 
 
 def _codex_home() -> str:
@@ -156,18 +157,21 @@ def _cmd_add(args: argparse.Namespace, dest_root: str) -> int:
         local_path = _expand_path(args.local_path)
         _validate_skill_dir(local_path)
         entry = {"local_path": local_path}
-    elif args.repo:
+    elif args.url:
+        entry = {"url": args.url, "ref": args.ref, "method": args.method}
+    else:
+        repo = args.repo or DEFAULT_REPO
         if not args.path:
-            raise ValueError("使用 --repo 时必须提供 --path")
+            if args.repo:
+                raise ValueError("使用 --repo 时必须提供 --path")
+            raise ValueError(f"使用默认仓库时必须提供 --path（默认: {DEFAULT_REPO}）")
         _validate_repo_path(args.path)
         entry = {
-            "repo": args.repo,
+            "repo": repo,
             "path": args.path,
             "ref": args.ref,
             "method": args.method,
         }
-    else:
-        entry = {"url": args.url, "ref": args.ref, "method": args.method}
     skills[args.name] = entry
     _save_sources(sources_path, data)
     print(f"已写入来源记录: {args.name}")
@@ -268,11 +272,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     add_parser = subparsers.add_parser("add", help="添加或更新来源记录")
     add_parser.add_argument("--name", required=True, help="技能名称")
-    source_group = add_parser.add_mutually_exclusive_group(required=True)
+    source_group = add_parser.add_mutually_exclusive_group(required=False)
     source_group.add_argument("--local-path", help="本地技能目录路径")
-    source_group.add_argument("--repo", help="GitHub 仓库，格式 owner/repo")
+    source_group.add_argument(
+        "--repo",
+        help=f"GitHub 仓库，格式 owner/repo（默认 {DEFAULT_REPO}）",
+    )
     source_group.add_argument("--url", help="GitHub URL，指向 skill 目录")
-    add_parser.add_argument("--path", help="仓库内路径，仅用于 --repo")
+    add_parser.add_argument("--path", help="仓库内路径，用于 --repo 或默认仓库")
     add_parser.add_argument("--ref", default="main", help="分支或标签")
     add_parser.add_argument(
         "--method",

@@ -27,6 +27,7 @@ description: 用于更新已安装的 Codex 技能。用户提出“更新/重�
 - 使用 `scripts/update_skills.py add` 添加或更新来源。
 - 支持 GitHub 安装源或本地路径源。
 - 默认保存在 `$CODEX_HOME/skills/.skill-sources.json`，可通过 `--sources` 覆盖。
+- 默认远程仓库：`https://github.com/CcooLcyy/skills.git`，`add` 省略 `--repo` 时使用（需提供 `--path`）。
 
 示例（JSON）:
 ```json
@@ -34,7 +35,7 @@ description: 用于更新已安装的 Codex 技能。用户提出“更新/重�
   "version": 1,
   "skills": {
     "git-commit": {
-      "repo": "openai/skills",
+      "repo": "CcooLcyy/skills",
       "path": "skills/git-commit",
       "ref": "main",
       "method": "auto"
@@ -48,7 +49,7 @@ description: 用于更新已安装的 Codex 技能。用户提出“更新/重�
 
 ## 常用命令
 - `python3 $CODEX_HOME/skills/skill-update/scripts/update_skills.py list`
-- `python3 $CODEX_HOME/skills/skill-update/scripts/update_skills.py add --name git-commit --repo openai/skills --path skills/git-commit --ref main`
+- `python3 $CODEX_HOME/skills/skill-update/scripts/update_skills.py add --name git-commit --path skills/git-commit --ref main`
 - `python3 $CODEX_HOME/skills/skill-update/scripts/update_skills.py add --name custom-skill --local-path /path/to/custom-skill`
 - `python3 $CODEX_HOME/skills/skill-update/scripts/update_skills.py update --all`
 - `python3 $CODEX_HOME/skills/skill-update/scripts/update_skills.py update --name git-commit`
