@@ -24,6 +24,7 @@ node_modules/
 build/
 dist/
 out/
+*.skill
 
 # Logs
 *.log
