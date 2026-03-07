@@ -18,6 +18,7 @@ DEFAULT_REPO = "CcooLcyy/skills"
 IGNORED_DIRS = {".git", "__pycache__"}
 IGNORED_FILES = {".DS_Store"}
 IGNORED_SUFFIXES = {".pyc"}
+DEFAULT_REPO_SYNC_SKILL = "skill-repo-sync"
 
 
 def _codex_home() -> str:
@@ -132,6 +133,40 @@ def _resolve_installer_path(user_path: str | None) -> str:
     return installer_path
 
 
+def _resolve_repo_sync_path(user_path: str | None) -> str:
+    candidates = []
+    if user_path:
+        candidates.append(_expand_path(user_path))
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates.append(
+        os.path.abspath(
+            os.path.join(
+                script_dir,
+                "..",
+                "..",
+                DEFAULT_REPO_SYNC_SKILL,
+                "scripts",
+                "repo_sync.py",
+            )
+        )
+    )
+    candidates.append(
+        os.path.join(
+            _codex_home(),
+            "skills",
+            DEFAULT_REPO_SYNC_SKILL,
+            "scripts",
+            "repo_sync.py",
+        )
+    )
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    raise FileNotFoundError(
+        "未找到仓库同步脚本，请先安装或链接 skill-repo-sync，或通过 --repo-sync 指定 repo_sync.py"
+    )
+
+
 def _install_from_github(entry: dict, name: str, stage_root: str, installer_path: str) -> None:
     cmd = [sys.executable, installer_path, "--dest", stage_root, "--name", name]
     if "url" in entry:
@@ -174,7 +209,17 @@ def _replace_skill(dest_root: str, name: str, new_path: str, keep_backup: bool) 
         shutil.rmtree(backup_path, ignore_errors=True)
 
 
+def _is_linked_skill(dest_root: str, name: str) -> bool:
+    dest_path = os.path.join(dest_root, name)
+    return os.path.islink(dest_path)
+
+
 def _update_one(name: str, entry: dict, dest_root: str, args: argparse.Namespace) -> bool:
+    dest_path = os.path.join(dest_root, name)
+    if _is_linked_skill(dest_root, name):
+        raise ValueError(
+            f"技能当前是软链，不能执行覆盖更新: {dest_path}；请改用 repo-status/repo-pull/repo-push，如软链丢失可再用 skill-dev-link 重新连接"
+        )
     tmp_root = tempfile.mkdtemp(prefix="skill-update-")
     try:
         stage_root = os.path.join(tmp_root, "stage")
@@ -188,7 +233,6 @@ def _update_one(name: str, entry: dict, dest_root: str, args: argparse.Namespace
             _install_from_github(entry, name, stage_root, installer_path)
         new_path = os.path.join(stage_root, name)
         _validate_skill_dir(new_path)
-        dest_path = os.path.join(dest_root, name)
         if _is_same_skill(dest_path, new_path):
             return False
         _replace_skill(dest_root, name, new_path, args.keep_backup)
@@ -308,8 +352,27 @@ def _cmd_update(args: argparse.Namespace, dest_root: str) -> int:
     return 1 if errors else 0
 
 
+def _forward_repo_sync(args: argparse.Namespace, subcommand: str) -> int:
+    script_path = _resolve_repo_sync_path(args.repo_sync)
+    cmd = [sys.executable, script_path, subcommand, "--name", args.name]
+    if getattr(args, "repo_dir", None):
+        cmd += ["--repo-dir", args.repo_dir]
+    if subcommand == "pull":
+        if args.rebase:
+            cmd.append("--rebase")
+        if args.autostash:
+            cmd.append("--autostash")
+    elif subcommand == "push":
+        if args.set_upstream:
+            cmd.append("--set-upstream")
+        if args.remote:
+            cmd += ["--remote", args.remote]
+    result = subprocess.run(cmd)
+    return result.returncode
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="更新已安装的 Codex 技能")
+    parser = argparse.ArgumentParser(description="统一管理已安装 Codex 技能的更新与仓库同步")
     parser.add_argument(
         "--dest",
         help="技能目录，默认 $CODEX_HOME/skills",
@@ -345,7 +408,7 @@ def _build_parser() -> argparse.ArgumentParser:
     remove_parser = subparsers.add_parser("remove", help="移除来源记录")
     remove_parser.add_argument("--name", nargs="+", required=True, help="技能名称")
 
-    update_parser = subparsers.add_parser("update", help="更新技能")
+    update_parser = subparsers.add_parser("update", help="更新普通安装型技能")
     update_parser.add_argument("--all", action="store_true", help="更新全部记录")
     update_parser.add_argument("--name", nargs="+", help="指定技能名称")
     update_parser.add_argument(
@@ -357,6 +420,25 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="保留旧版本备份",
     )
+
+    repo_status_parser = subparsers.add_parser("repo-status", help="查看已接入 skill 所在仓库状态")
+    repo_status_parser.add_argument("--name", required=True, help="skill 名称")
+    repo_status_parser.add_argument("--repo-dir", help="本地仓库目录，默认从链接状态解析")
+    repo_status_parser.add_argument("--repo-sync", help="repo_sync.py 路径")
+
+    repo_pull_parser = subparsers.add_parser("repo-pull", help="拉取已接入 skill 所在仓库")
+    repo_pull_parser.add_argument("--name", required=True, help="skill 名称")
+    repo_pull_parser.add_argument("--repo-dir", help="本地仓库目录，默认从链接状态解析")
+    repo_pull_parser.add_argument("--repo-sync", help="repo_sync.py 路径")
+    repo_pull_parser.add_argument("--rebase", action="store_true", help="使用 rebase 方式拉取")
+    repo_pull_parser.add_argument("--autostash", action="store_true", help="拉取前自动暂存未提交改动")
+
+    repo_push_parser = subparsers.add_parser("repo-push", help="推送已接入 skill 所在仓库")
+    repo_push_parser.add_argument("--name", required=True, help="skill 名称")
+    repo_push_parser.add_argument("--repo-dir", help="本地仓库目录，默认从链接状态解析")
+    repo_push_parser.add_argument("--repo-sync", help="repo_sync.py 路径")
+    repo_push_parser.add_argument("--set-upstream", action="store_true", help="为当前分支设置上游分支")
+    repo_push_parser.add_argument("--remote", default="origin", help="推送远程名，默认 origin")
 
     return parser
 
@@ -375,6 +457,12 @@ def main(argv: list[str]) -> int:
             return _cmd_remove(args, dest_root)
         if args.command == "update":
             return _cmd_update(args, dest_root)
+        if args.command == "repo-status":
+            return _forward_repo_sync(args, "status")
+        if args.command == "repo-pull":
+            return _forward_repo_sync(args, "pull")
+        if args.command == "repo-push":
+            return _forward_repo_sync(args, "push")
         parser.print_help()
         return 1
     except Exception as exc:
