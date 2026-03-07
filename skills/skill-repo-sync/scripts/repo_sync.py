@@ -130,26 +130,44 @@ def _cmd_pull(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_push(args: argparse.Namespace) -> int:
-    repo_dir, _entry = _resolve_repo(args)
-    if _has_uncommitted_changes(repo_dir):
-        print("警告: 仓库仍有未提交改动，本次只会推送已提交内容", file=sys.stderr)
-    cmd = ["push"]
+def _build_push_cmd(args: argparse.Namespace, repo_dir: Path) -> list[str]:
     if args.set_upstream:
         branch = _run_git(["branch", "--show-current"], repo_dir)
         if not branch:
             raise RepoSyncError("无法识别当前分支，不能设置上游分支")
-        cmd = ["push", "--set-upstream", args.remote, branch]
-    output = _run_git(cmd, repo_dir)
+        return ["push", "--set-upstream", args.remote, branch]
+    return ["push", args.remote]
+
+
+def _cmd_push(args: argparse.Namespace) -> int:
+    repo_dir, _entry = _resolve_repo(args)
+    if _has_uncommitted_changes(repo_dir):
+        print("警告: 仓库仍有未提交改动，本次只会推送已提交内容", file=sys.stderr)
+    output = _run_git(_build_push_cmd(args, repo_dir), repo_dir)
     print(f"已推送仓库: {repo_dir}")
     if output:
         print(output)
     return 0
 
 
+def _cmd_sync(args: argparse.Namespace) -> int:
+    pull_result = _cmd_pull(args)
+    if pull_result != 0:
+        return pull_result
+    return _cmd_push(args)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="同步由 skill-dev-link 接入的 skill 仓库")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    sync_parser = subparsers.add_parser("sync", help="直接同步 skill 对应仓库（先拉取再推送）")
+    sync_parser.add_argument("--name", required=True, help="skill 名称，用于解析所属仓库")
+    sync_parser.add_argument("--repo-dir", help="显式指定仓库目录，跳过链接状态解析")
+    sync_parser.add_argument("--rebase", action="store_true", help="使用 rebase 方式拉取")
+    sync_parser.add_argument("--autostash", action="store_true", help="拉取前自动暂存本地未提交改动")
+    sync_parser.add_argument("--set-upstream", action="store_true", help="为当前分支设置上游分支后推送")
+    sync_parser.add_argument("--remote", default=DEFAULT_REMOTE, help=f"推送远程名，默认 {DEFAULT_REMOTE}")
 
     status_parser = subparsers.add_parser("status", help="查看 skill 对应仓库状态")
     status_parser.add_argument("--name", required=True, help="skill 名称，用于解析所属仓库")
@@ -174,6 +192,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "sync":
+            return _cmd_sync(args)
         if args.command == "status":
             return _cmd_status(args)
         if args.command == "pull":

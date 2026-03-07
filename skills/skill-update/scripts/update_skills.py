@@ -352,22 +352,26 @@ def _cmd_update(args: argparse.Namespace, dest_root: str) -> int:
     return 1 if errors else 0
 
 
-def _forward_repo_sync(args: argparse.Namespace, subcommand: str) -> int:
+def _build_repo_sync_cmd(args: argparse.Namespace, subcommand: str) -> list[str]:
     script_path = _resolve_repo_sync_path(args.repo_sync)
     cmd = [sys.executable, script_path, subcommand, "--name", args.name]
     if getattr(args, "repo_dir", None):
         cmd += ["--repo-dir", args.repo_dir]
-    if subcommand == "pull":
+    if subcommand in {"pull", "sync"}:
         if args.rebase:
             cmd.append("--rebase")
         if args.autostash:
             cmd.append("--autostash")
-    elif subcommand == "push":
+    if subcommand in {"push", "sync"}:
         if args.set_upstream:
             cmd.append("--set-upstream")
         if args.remote:
             cmd += ["--remote", args.remote]
-    result = subprocess.run(cmd)
+    return cmd
+
+
+def _forward_repo_sync(args: argparse.Namespace, subcommand: str) -> int:
+    result = subprocess.run(_build_repo_sync_cmd(args, subcommand))
     return result.returncode
 
 
@@ -421,6 +425,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="保留旧版本备份",
     )
 
+    repo_sync_parser = subparsers.add_parser("repo-sync", help="直接同步已接入 skill 所在仓库（先拉取再推送）")
+    repo_sync_parser.add_argument("--name", required=True, help="skill 名称")
+    repo_sync_parser.add_argument("--repo-dir", help="本地仓库目录，默认从链接状态解析")
+    repo_sync_parser.add_argument("--repo-sync", help="repo_sync.py 路径")
+    repo_sync_parser.add_argument("--rebase", action="store_true", help="使用 rebase 方式拉取")
+    repo_sync_parser.add_argument("--autostash", action="store_true", help="拉取前自动暂存未提交改动")
+    repo_sync_parser.add_argument("--set-upstream", action="store_true", help="推送时为当前分支设置上游分支")
+    repo_sync_parser.add_argument("--remote", default="origin", help="推送远程名，默认 origin")
+
     repo_status_parser = subparsers.add_parser("repo-status", help="查看已接入 skill 所在仓库状态")
     repo_status_parser.add_argument("--name", required=True, help="skill 名称")
     repo_status_parser.add_argument("--repo-dir", help="本地仓库目录，默认从链接状态解析")
@@ -457,6 +470,8 @@ def main(argv: list[str]) -> int:
             return _cmd_remove(args, dest_root)
         if args.command == "update":
             return _cmd_update(args, dest_root)
+        if args.command == "repo-sync":
+            return _forward_repo_sync(args, "sync")
         if args.command == "repo-status":
             return _forward_repo_sync(args, "status")
         if args.command == "repo-pull":
