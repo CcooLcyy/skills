@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Update"
+  short_description: "统一管理技能来源更新、仓库接入与同步"
+  default_prompt: "使用 $skill-update 统一管理技能更新、仓库接入与同步。"

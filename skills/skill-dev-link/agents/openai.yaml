@@ -1,4 +1,0 @@
-interface:
-  display_name: "Skill Dev Link"
-  short_description: "把技能仓库接入 Codex，管理单个技能目录的备份软链与恢复"
-  default_prompt: "使用 $skill-dev-link 把某个技能目录接入本地仓库开发流程。"

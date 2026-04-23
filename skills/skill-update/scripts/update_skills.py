@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""更新已安装的 Codex 技能。"""
+"""统一管理已安装 Codex 技能的更新、接入与同步。"""
 
 from __future__ import annotations
 
@@ -12,13 +12,16 @@ import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
+
+import link_ops
+import repo_ops
 
 DEFAULT_SOURCES_NAME = ".skill-sources.json"
-DEFAULT_REPO = "CcooLcyy/skills"
+DEFAULT_REPO = link_ops.DEFAULT_REPO
 IGNORED_DIRS = {".git", "__pycache__"}
 IGNORED_FILES = {".DS_Store"}
 IGNORED_SUFFIXES = {".pyc"}
-DEFAULT_REPO_SYNC_SKILL = "skill-repo-sync"
 
 
 def _codex_home() -> str:
@@ -133,40 +136,6 @@ def _resolve_installer_path(user_path: str | None) -> str:
     return installer_path
 
 
-def _resolve_repo_sync_path(user_path: str | None) -> str:
-    candidates = []
-    if user_path:
-        candidates.append(_expand_path(user_path))
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    candidates.append(
-        os.path.abspath(
-            os.path.join(
-                script_dir,
-                "..",
-                "..",
-                DEFAULT_REPO_SYNC_SKILL,
-                "scripts",
-                "repo_sync.py",
-            )
-        )
-    )
-    candidates.append(
-        os.path.join(
-            _codex_home(),
-            "skills",
-            DEFAULT_REPO_SYNC_SKILL,
-            "scripts",
-            "repo_sync.py",
-        )
-    )
-    for candidate in candidates:
-        if os.path.isfile(candidate):
-            return candidate
-    raise FileNotFoundError(
-        "未找到仓库同步脚本，请先安装或链接 skill-repo-sync，或通过 --repo-sync 指定 repo_sync.py"
-    )
-
-
 def _install_from_github(entry: dict, name: str, stage_root: str, installer_path: str) -> None:
     cmd = [sys.executable, installer_path, "--dest", stage_root, "--name", name]
     if "url" in entry:
@@ -191,11 +160,19 @@ def _install_from_github(entry: dict, name: str, stage_root: str, installer_path
     subprocess.run(cmd, check=True)
 
 
+def _remove_path(path: str) -> None:
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path, ignore_errors=True)
+        return
+    if os.path.lexists(path):
+        os.remove(path)
+
+
 def _replace_skill(dest_root: str, name: str, new_path: str, keep_backup: bool) -> None:
     os.makedirs(dest_root, exist_ok=True)
     dest_path = os.path.join(dest_root, name)
     backup_path = None
-    if os.path.exists(dest_path):
+    if os.path.lexists(dest_path):
         timestamp = time.strftime("%Y%m%d%H%M%S")
         backup_path = f"{dest_path}.bak-{timestamp}"
         shutil.move(dest_path, backup_path)
@@ -206,7 +183,7 @@ def _replace_skill(dest_root: str, name: str, new_path: str, keep_backup: bool) 
             shutil.move(backup_path, dest_path)
         raise
     if backup_path and not keep_backup:
-        shutil.rmtree(backup_path, ignore_errors=True)
+        _remove_path(backup_path)
 
 
 def _is_linked_skill(dest_root: str, name: str) -> bool:
@@ -214,11 +191,72 @@ def _is_linked_skill(dest_root: str, name: str) -> bool:
     return os.path.islink(dest_path)
 
 
+def _installed_skill_state(dest_root: str, name: str) -> dict:
+    dest_path = Path(dest_root) / name
+    if dest_path.is_symlink():
+        return {
+            "state": "软链",
+            "path": str(dest_path),
+            "target": os.path.realpath(str(dest_path)),
+        }
+    if dest_path.is_dir():
+        return {"state": "已安装", "path": str(dest_path)}
+    if dest_path.exists():
+        return {"state": "路径被文件占用", "path": str(dest_path)}
+    return {"state": "未安装", "path": str(dest_path)}
+
+
+def _format_source_entry(name: str, entry: dict) -> str:
+    if "local_path" in entry:
+        return f"{name}: 本地 {entry['local_path']}"
+    if "url" in entry:
+        ref = entry.get("ref", "")
+        method = entry.get("method", "")
+        suffix = " ".join([item for item in [ref, method] if item])
+        line = f"{name}: GitHub URL {entry['url']}"
+        if suffix:
+            line = f"{line} ({suffix})"
+        return line
+    ref = entry.get("ref", "")
+    method = entry.get("method", "")
+    suffix = " ".join([item for item in [ref, method] if item])
+    line = f"{name}: GitHub {entry.get('repo')} {entry.get('path')}"
+    if suffix:
+        line = f"{line} ({suffix})"
+    return line
+
+
+def _print_link_result(result: dict) -> None:
+    name = result["name"]
+    target_path = result["target_path"]
+    source_path = result["source_path"]
+    if result["status"] == "already_linked":
+        print(f"{name}: 已链接 -> {source_path}")
+        return
+    if result["new_backup_path"]:
+        print(f"{name}: 已备份原目录 -> {result['new_backup_path']}")
+    if result["status"] == "relinked":
+        print(f"{name}: 已更新软链 -> {target_path} -> {source_path}")
+    else:
+        print(f"{name}: 已创建软链 -> {target_path} -> {source_path}")
+
+
+def _print_source_details(name: str, entry: dict, dest_root: str) -> None:
+    print("来源记录:")
+    print(f"  { _format_source_entry(name, entry) }")
+    install_state = _installed_skill_state(dest_root, name)
+    print("当前安装状态:")
+    print(f"  state: {install_state['state']}")
+    print(f"  path: {install_state['path']}")
+    if install_state.get("target"):
+        print(f"  target: {install_state['target']}")
+
+
 def _update_one(name: str, entry: dict, dest_root: str, args: argparse.Namespace) -> bool:
     dest_path = os.path.join(dest_root, name)
     if _is_linked_skill(dest_root, name):
         raise ValueError(
-            f"技能当前是软链，不能执行覆盖更新: {dest_path}；请改用 repo-status/repo-pull/repo-push，如软链丢失可再用 skill-dev-link 重新连接"
+            f"技能当前是软链，不能执行覆盖更新: {dest_path}；请改用 status/sync/pull/push，如软链丢失可再用 connect 重新连接"
         )
     tmp_root = tempfile.mkdtemp(prefix="skill-update-")
     try:
@@ -241,7 +279,7 @@ def _update_one(name: str, entry: dict, dest_root: str, args: argparse.Namespace
         shutil.rmtree(tmp_root, ignore_errors=True)
 
 
-def _cmd_add(args: argparse.Namespace, dest_root: str) -> int:
+def _cmd_source_add(args: argparse.Namespace, dest_root: str) -> int:
     sources_path = args.sources or _default_sources(dest_root)
     data = _load_sources(sources_path)
     skills = data.setdefault("skills", {})
@@ -270,7 +308,7 @@ def _cmd_add(args: argparse.Namespace, dest_root: str) -> int:
     return 0
 
 
-def _cmd_list(args: argparse.Namespace, dest_root: str) -> int:
+def _cmd_source_list(args: argparse.Namespace, dest_root: str) -> int:
     sources_path = args.sources or _default_sources(dest_root)
     data = _load_sources(sources_path)
     skills = data.get("skills", {})
@@ -278,29 +316,11 @@ def _cmd_list(args: argparse.Namespace, dest_root: str) -> int:
         print("暂无来源记录")
         return 0
     for name in sorted(skills.keys()):
-        entry = skills[name]
-        if "local_path" in entry:
-            print(f"{name}: 本地 {entry['local_path']}")
-        elif "url" in entry:
-            ref = entry.get("ref", "")
-            method = entry.get("method", "")
-            suffix = " ".join([item for item in [ref, method] if item])
-            line = f"{name}: GitHub URL {entry['url']}"
-            if suffix:
-                line = f"{line} ({suffix})"
-            print(line)
-        else:
-            ref = entry.get("ref", "")
-            method = entry.get("method", "")
-            suffix = " ".join([item for item in [ref, method] if item])
-            line = f"{name}: GitHub {entry.get('repo')} {entry.get('path')}"
-            if suffix:
-                line = f"{line} ({suffix})"
-            print(line)
+        print(_format_source_entry(name, skills[name]))
     return 0
 
 
-def _cmd_remove(args: argparse.Namespace, dest_root: str) -> int:
+def _cmd_source_remove(args: argparse.Namespace, dest_root: str) -> int:
     sources_path = args.sources or _default_sources(dest_root)
     data = _load_sources(sources_path)
     skills = data.get("skills", {})
@@ -321,7 +341,7 @@ def _cmd_remove(args: argparse.Namespace, dest_root: str) -> int:
 def _cmd_update(args: argparse.Namespace, dest_root: str) -> int:
     sources_path = args.sources or _default_sources(dest_root)
     if not os.path.exists(sources_path):
-        print("来源文件不存在，请先使用 add 写入来源记录", file=sys.stderr)
+        print("来源文件不存在，请先使用 source-add 写入来源记录", file=sys.stderr)
         return 1
     data = _load_sources(sources_path)
     skills = data.get("skills", {})
@@ -352,136 +372,315 @@ def _cmd_update(args: argparse.Namespace, dest_root: str) -> int:
     return 1 if errors else 0
 
 
-def _build_repo_sync_cmd(args: argparse.Namespace, subcommand: str) -> list[str]:
-    script_path = _resolve_repo_sync_path(args.repo_sync)
-    cmd = [sys.executable, script_path, subcommand, "--name", args.name]
-    if getattr(args, "repo_dir", None):
-        cmd += ["--repo-dir", args.repo_dir]
-    if subcommand in {"pull", "sync"}:
-        if args.rebase:
-            cmd.append("--rebase")
-        if args.autostash:
-            cmd.append("--autostash")
-    if subcommand in {"push", "sync"}:
-        if args.set_upstream:
-            cmd.append("--set-upstream")
-        if args.remote:
-            cmd += ["--remote", args.remote]
-    return cmd
+def _cmd_connect(args: argparse.Namespace, dest_root: str) -> int:
+    skills_root_path = Path(dest_root)
+    link_ops.ensure_dir(skills_root_path)
+    state_file = link_ops.state_path(skills_root_path)
+    repo = args.repo or link_ops.DEFAULT_REPO
+    repo_url = args.repo_url or link_ops.build_repo_url(repo)
+    repo_dir = link_ops.expand_path(args.repo_dir) if args.repo_dir else link_ops.default_repo_dir(repo)
+
+    if repo_dir.exists():
+        if not repo_dir.is_dir():
+            raise link_ops.SkillLinkError(f"仓库路径不是目录: {repo_dir}")
+        if not link_ops.is_git_repo(repo_dir):
+            raise link_ops.SkillLinkError(f"现有目录不是 Git 仓库: {repo_dir}")
+        action = "已登记现有仓库"
+    else:
+        link_ops.ensure_dir(repo_dir.parent)
+        link_ops.run_git(
+            [
+                "clone",
+                "--depth",
+                "1",
+                "--single-branch",
+                "--branch",
+                args.ref,
+                repo_url,
+                str(repo_dir),
+            ]
+        )
+        action = "已克隆并登记仓库"
+
+    state = link_ops.load_state(state_file)
+    state["default_repo"] = link_ops.collect_default_repo_record(repo, repo_dir, args.ref, repo_url)
+    link_ops.save_state(state_file, state)
+
+    print(action)
+    print(f"repo: {repo}")
+    print(f"repo_dir: {repo_dir}")
+    print(f"state: {state_file}")
+
+    if args.no_link:
+        print("已跳过链接")
+        return 0
+
+    selected_names = [args.name] if args.name else None
+    if args.name:
+        print(f"开始链接 skill: {args.name}")
+    else:
+        print("开始链接仓库中的全部 skill...")
+    results, errors = link_ops.link_many(
+        state,
+        state_file,
+        repo_dir,
+        skills_root_path=skills_root_path,
+        names=selected_names,
+    )
+    for result in results:
+        _print_link_result(result)
+    for name, message in errors:
+        print(f"{name}: 链接失败 - {message}", file=sys.stderr)
+    return 1 if errors else 0
 
 
-def _forward_repo_sync(args: argparse.Namespace, subcommand: str) -> int:
-    result = subprocess.run(_build_repo_sync_cmd(args, subcommand))
-    return result.returncode
+def _cmd_status(args: argparse.Namespace, dest_root: str) -> int:
+    skills_root_path = Path(dest_root)
+    state = link_ops.load_state(link_ops.state_path(skills_root_path))
+    sources = _load_sources(args.sources or _default_sources(dest_root))
+    links = state.get("links", {})
+    source_skills = sources.get("skills", {})
+
+    if args.name:
+        entry = links.get(args.name)
+        if entry:
+            snapshot = link_ops.status_snapshot(args.name, entry, skills_root_path=skills_root_path)
+            print("接入记录:")
+            print(f"  skill: {args.name}")
+            print(f"  status: {snapshot['status']}")
+            print(f"  target: {snapshot['target_path']}")
+            if snapshot["source_path"]:
+                print(f"  source: {snapshot['source_path']}")
+            if snapshot["backup_path"]:
+                backup_state = "存在" if snapshot["backup_exists"] else "缺失"
+                print(f"  backup: {snapshot['backup_path']} ({backup_state})")
+            try:
+                repo_snapshot = repo_ops.repo_status(
+                    args.name,
+                    args.repo_dir,
+                    skills_root_path=skills_root_path,
+                )
+                print("git status:")
+                if repo_snapshot["git_status"]:
+                    print(repo_snapshot["git_status"])
+            except repo_ops.RepoSyncError as exc:
+                print("git status:")
+                print(f"错误: {exc}")
+            if args.name in source_skills:
+                _print_source_details(args.name, source_skills[args.name], dest_root)
+            return 0
+
+        source_entry = source_skills.get(args.name)
+        if source_entry:
+            _print_source_details(args.name, source_entry, dest_root)
+            return 0
+
+        print(f"未找到接入记录或来源记录: {args.name}", file=sys.stderr)
+        return 1
+
+    default_repo = state.get("default_repo") or {}
+    if default_repo:
+        print("默认仓库:")
+        print(f"  repo: {default_repo.get('repo', '')}")
+        print(f"  repo_dir: {default_repo.get('repo_dir', '')}")
+        print(f"  repo_url: {default_repo.get('repo_url', '')}")
+        print(f"  ref: {default_repo.get('ref', '')}")
+    else:
+        print("默认仓库: 未登记")
+
+    if links:
+        print("接入记录:")
+        for name in sorted(links.keys()):
+            snapshot = link_ops.status_snapshot(name, links[name], skills_root_path=skills_root_path)
+            print(f"  {name}: {snapshot['status']}")
+    else:
+        print("接入记录: 暂无记录")
+
+    if source_skills:
+        print("来源记录:")
+        for name in sorted(source_skills.keys()):
+            print(f"  {_format_source_entry(name, source_skills[name])}")
+    else:
+        print("来源记录: 暂无记录")
+    return 0
+
+
+def _cmd_restore(args: argparse.Namespace, dest_root: str) -> int:
+    skills_root_path = Path(dest_root)
+    state_file = link_ops.state_path(skills_root_path)
+    state = link_ops.load_state(state_file)
+    result = link_ops.restore_link(
+        state,
+        state_file,
+        args.name,
+        skills_root_path=skills_root_path,
+    )
+    if result["restored"]:
+        print(f"已恢复备份: {result['target_path']}")
+    else:
+        print(f"未找到备份，仅移除软链记录: {args.name}")
+    return 0
+
+
+def _cmd_pull(args: argparse.Namespace, dest_root: str) -> int:
+    result = repo_ops.pull_repo(
+        args.name,
+        args.repo_dir,
+        rebase=args.rebase,
+        autostash=args.autostash,
+        skills_root_path=Path(dest_root),
+    )
+    print(f"已拉取仓库: {result['repo_dir']}")
+    if result["output"]:
+        print(result["output"])
+    return 0
+
+
+def _cmd_push(args: argparse.Namespace, dest_root: str) -> int:
+    result = repo_ops.push_repo(
+        args.name,
+        args.repo_dir,
+        set_upstream=args.set_upstream,
+        remote=args.remote,
+        skills_root_path=Path(dest_root),
+    )
+    if result["dirty_warning"]:
+        print("警告: 仓库仍有未提交改动，本次只会推送已提交内容", file=sys.stderr)
+    print(f"已推送仓库: {result['repo_dir']}")
+    if result["output"]:
+        print(result["output"])
+    return 0
+
+
+def _cmd_sync(args: argparse.Namespace, dest_root: str) -> int:
+    result = repo_ops.sync_repo(
+        args.name,
+        args.repo_dir,
+        rebase=args.rebase,
+        autostash=args.autostash,
+        set_upstream=args.set_upstream,
+        remote=args.remote,
+        skills_root_path=Path(dest_root),
+    )
+    pull_result = result["pull"]
+    print(f"已拉取仓库: {pull_result['repo_dir']}")
+    if pull_result["output"]:
+        print(pull_result["output"])
+    push_result = result["push"]
+    if push_result["dirty_warning"]:
+        print("警告: 仓库仍有未提交改动，本次只会推送已提交内容", file=sys.stderr)
+    print(f"已推送仓库: {push_result['repo_dir']}")
+    if push_result["output"]:
+        print(push_result["output"])
+    return 0
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="统一管理已安装 Codex 技能的更新与仓库同步")
-    parser.add_argument(
-        "--dest",
-        help="技能目录，默认 $CODEX_HOME/skills",
-    )
-    parser.add_argument(
-        "--sources",
-        help="来源配置文件，默认 <dest>/.skill-sources.json",
-    )
+    parser = argparse.ArgumentParser(description="统一管理已安装 Codex 技能的更新、接入与同步")
+    parser.add_argument("--dest", help="技能目录，默认 $CODEX_HOME/skills")
+    parser.add_argument("--sources", help="来源配置文件，默认 <dest>/.skill-sources.json")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    add_parser = subparsers.add_parser("add", help="添加或更新来源记录")
-    add_parser.add_argument("--name", required=True, help="技能名称")
-    source_group = add_parser.add_mutually_exclusive_group(required=False)
+    connect_parser = subparsers.add_parser("connect", help="登记技能仓库并链接 skill")
+    connect_parser.add_argument("--repo", default=DEFAULT_REPO, help=f"GitHub 仓库，默认 {DEFAULT_REPO}")
+    connect_parser.add_argument("--repo-url", help="显式指定克隆 URL")
+    connect_parser.add_argument("--repo-dir", help="本地仓库目录")
+    connect_parser.add_argument("--ref", default=link_ops.DEFAULT_REF, help=f"分支或标签，默认 {link_ops.DEFAULT_REF}")
+    connect_target_group = connect_parser.add_mutually_exclusive_group(required=False)
+    connect_target_group.add_argument("--name", help="仅链接指定 skill")
+    connect_target_group.add_argument("--all", action="store_true", help="链接仓库中的全部 skill")
+    connect_target_group.add_argument("--no-link", action="store_true", help="仅登记仓库，不创建软链")
+
+    status_parser = subparsers.add_parser("status", help="查看技能来源、接入与仓库状态")
+    status_parser.add_argument("--name", help="指定 skill 名称")
+    status_parser.add_argument("--repo-dir", help="显式指定仓库目录，仅对已接入 skill 生效")
+
+    sync_parser = subparsers.add_parser("sync", help="同步已接入 skill 所在仓库（先拉取再推送）")
+    sync_parser.add_argument("--name", required=True, help="skill 名称")
+    sync_parser.add_argument("--repo-dir", help="本地仓库目录，默认从接入记录解析")
+    sync_parser.add_argument("--rebase", action="store_true", help="使用 rebase 方式拉取")
+    sync_parser.add_argument("--autostash", action="store_true", help="拉取前自动暂存未提交改动")
+    sync_parser.add_argument("--set-upstream", action="store_true", help="推送时为当前分支设置上游分支")
+    sync_parser.add_argument("--remote", default=repo_ops.DEFAULT_REMOTE, help=f"推送远程名，默认 {repo_ops.DEFAULT_REMOTE}")
+
+    pull_parser = subparsers.add_parser("pull", help="拉取已接入 skill 所在仓库")
+    pull_parser.add_argument("--name", required=True, help="skill 名称")
+    pull_parser.add_argument("--repo-dir", help="本地仓库目录，默认从接入记录解析")
+    pull_parser.add_argument("--rebase", action="store_true", help="使用 rebase 方式拉取")
+    pull_parser.add_argument("--autostash", action="store_true", help="拉取前自动暂存未提交改动")
+
+    push_parser = subparsers.add_parser("push", help="推送已接入 skill 所在仓库")
+    push_parser.add_argument("--name", required=True, help="skill 名称")
+    push_parser.add_argument("--repo-dir", help="本地仓库目录，默认从接入记录解析")
+    push_parser.add_argument("--set-upstream", action="store_true", help="为当前分支设置上游分支")
+    push_parser.add_argument("--remote", default=repo_ops.DEFAULT_REMOTE, help=f"推送远程名，默认 {repo_ops.DEFAULT_REMOTE}")
+
+    restore_parser = subparsers.add_parser("restore", help="移除软链并恢复备份")
+    restore_parser.add_argument("--name", required=True, help="skill 名称")
+
+    source_add_parser = subparsers.add_parser("source-add", help="添加或更新来源记录")
+    source_add_parser.add_argument("--name", required=True, help="技能名称")
+    source_group = source_add_parser.add_mutually_exclusive_group(required=False)
     source_group.add_argument("--local-path", help="本地技能目录路径")
-    source_group.add_argument(
-        "--repo",
-        help=f"GitHub 仓库，格式 owner/repo（默认 {DEFAULT_REPO}）",
-    )
+    source_group.add_argument("--repo", help=f"GitHub 仓库，格式 owner/repo（默认 {DEFAULT_REPO}）")
     source_group.add_argument("--url", help="GitHub URL，指向 skill 目录")
-    add_parser.add_argument("--path", help="仓库内路径，用于 --repo 或默认仓库")
-    add_parser.add_argument("--ref", default="main", help="分支或标签")
-    add_parser.add_argument(
+    source_add_parser.add_argument("--path", help="仓库内路径，用于 --repo 或默认仓库")
+    source_add_parser.add_argument("--ref", default="main", help="分支或标签")
+    source_add_parser.add_argument(
         "--method",
         default="auto",
         choices=["auto", "download", "git"],
         help="安装方式",
     )
 
-    list_parser = subparsers.add_parser("list", help="列出来源记录")
-    list_parser.set_defaults(command="list")
+    subparsers.add_parser("source-list", help="列出来源记录")
 
-    remove_parser = subparsers.add_parser("remove", help="移除来源记录")
-    remove_parser.add_argument("--name", nargs="+", required=True, help="技能名称")
+    source_remove_parser = subparsers.add_parser("source-remove", help="移除来源记录")
+    source_remove_parser.add_argument("--name", nargs="+", required=True, help="技能名称")
 
     update_parser = subparsers.add_parser("update", help="更新普通安装型技能")
     update_parser.add_argument("--all", action="store_true", help="更新全部记录")
     update_parser.add_argument("--name", nargs="+", help="指定技能名称")
-    update_parser.add_argument(
-        "--installer",
-        help="install-skill-from-github.py 路径",
-    )
-    update_parser.add_argument(
-        "--keep-backup",
-        action="store_true",
-        help="保留旧版本备份",
-    )
-
-    repo_sync_parser = subparsers.add_parser("repo-sync", help="直接同步已接入 skill 所在仓库（先拉取再推送）")
-    repo_sync_parser.add_argument("--name", required=True, help="skill 名称")
-    repo_sync_parser.add_argument("--repo-dir", help="本地仓库目录，默认从链接状态解析")
-    repo_sync_parser.add_argument("--repo-sync", help="repo_sync.py 路径")
-    repo_sync_parser.add_argument("--rebase", action="store_true", help="使用 rebase 方式拉取")
-    repo_sync_parser.add_argument("--autostash", action="store_true", help="拉取前自动暂存未提交改动")
-    repo_sync_parser.add_argument("--set-upstream", action="store_true", help="推送时为当前分支设置上游分支")
-    repo_sync_parser.add_argument("--remote", default="origin", help="推送远程名，默认 origin")
-
-    repo_status_parser = subparsers.add_parser("repo-status", help="查看已接入 skill 所在仓库状态")
-    repo_status_parser.add_argument("--name", required=True, help="skill 名称")
-    repo_status_parser.add_argument("--repo-dir", help="本地仓库目录，默认从链接状态解析")
-    repo_status_parser.add_argument("--repo-sync", help="repo_sync.py 路径")
-
-    repo_pull_parser = subparsers.add_parser("repo-pull", help="拉取已接入 skill 所在仓库")
-    repo_pull_parser.add_argument("--name", required=True, help="skill 名称")
-    repo_pull_parser.add_argument("--repo-dir", help="本地仓库目录，默认从链接状态解析")
-    repo_pull_parser.add_argument("--repo-sync", help="repo_sync.py 路径")
-    repo_pull_parser.add_argument("--rebase", action="store_true", help="使用 rebase 方式拉取")
-    repo_pull_parser.add_argument("--autostash", action="store_true", help="拉取前自动暂存未提交改动")
-
-    repo_push_parser = subparsers.add_parser("repo-push", help="推送已接入 skill 所在仓库")
-    repo_push_parser.add_argument("--name", required=True, help="skill 名称")
-    repo_push_parser.add_argument("--repo-dir", help="本地仓库目录，默认从链接状态解析")
-    repo_push_parser.add_argument("--repo-sync", help="repo_sync.py 路径")
-    repo_push_parser.add_argument("--set-upstream", action="store_true", help="为当前分支设置上游分支")
-    repo_push_parser.add_argument("--remote", default="origin", help="推送远程名，默认 origin")
+    update_parser.add_argument("--installer", help="install-skill-from-github.py 路径")
+    update_parser.add_argument("--keep-backup", action="store_true", help="保留旧版本备份")
 
     return parser
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     dest_root = _expand_path(args.dest) if args.dest else _default_dest()
 
     try:
-        if args.command == "add":
-            return _cmd_add(args, dest_root)
-        if args.command == "list":
-            return _cmd_list(args, dest_root)
-        if args.command == "remove":
-            return _cmd_remove(args, dest_root)
+        if args.command == "connect":
+            return _cmd_connect(args, dest_root)
+        if args.command == "status":
+            return _cmd_status(args, dest_root)
+        if args.command == "sync":
+            return _cmd_sync(args, dest_root)
+        if args.command == "pull":
+            return _cmd_pull(args, dest_root)
+        if args.command == "push":
+            return _cmd_push(args, dest_root)
+        if args.command == "restore":
+            return _cmd_restore(args, dest_root)
+        if args.command == "source-add":
+            return _cmd_source_add(args, dest_root)
+        if args.command == "source-list":
+            return _cmd_source_list(args, dest_root)
+        if args.command == "source-remove":
+            return _cmd_source_remove(args, dest_root)
         if args.command == "update":
             return _cmd_update(args, dest_root)
-        if args.command == "repo-sync":
-            return _forward_repo_sync(args, "sync")
-        if args.command == "repo-status":
-            return _forward_repo_sync(args, "status")
-        if args.command == "repo-pull":
-            return _forward_repo_sync(args, "pull")
-        if args.command == "repo-push":
-            return _forward_repo_sync(args, "push")
         parser.print_help()
         return 1
-    except Exception as exc:
+    except (link_ops.SkillLinkError, repo_ops.RepoSyncError, ValueError, FileNotFoundError) as exc:
         print(f"错误: {exc}", file=sys.stderr)
+        return 1
+    except subprocess.CalledProcessError as exc:
+        print(f"错误: 命令执行失败（退出码 {exc.returncode}）", file=sys.stderr)
         return 1
 
 

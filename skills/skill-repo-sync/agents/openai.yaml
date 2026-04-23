@@ -1,4 +1,0 @@
-interface:
-  display_name: "Skill Repo Sync"
-  short_description: "查看已接入技能仓库状态并执行拉取推送同步"
-  default_prompt: "使用 $skill-repo-sync 查看或同步已接入技能所在的 Git 仓库。"
