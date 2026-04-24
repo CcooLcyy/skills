@@ -1,0 +1,7 @@
+interface:
+  display_name: "SSH 设备连接"
+  short_description: "按 ip、port、user、passwd 收集设备信息并验证 SSH 连接，成功后在当前会话继续工作"
+  default_prompt: "使用 $ssh-device-debug 按 ip、port、user、passwd 的顺序收集设备连接信息，验证 SSH 连接，并在成功后将该设备作为当前会话上下文继续处理后续工作。"
+
+policy:
+  allow_implicit_invocation: false
