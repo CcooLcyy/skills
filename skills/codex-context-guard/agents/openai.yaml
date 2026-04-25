@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Context Guard"
+  short_description: "检查并修复 Codex 上下文窗口配置。"
+  default_prompt: "使用 $codex-context-guard 检查并修复我的 Codex 上下文窗口配置。"
