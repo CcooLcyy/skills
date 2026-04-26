@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 STATE_FILE_NAME = ".dev-links.json"
 BACKUP_DIR_NAME = ".dev-link-backups"
@@ -101,6 +102,84 @@ def is_git_repo(path: Path) -> bool:
     except SkillLinkError:
         return False
     return output == "true"
+
+
+def git_root(path: Path | None = None) -> Path | None:
+    start_path = path or Path.cwd()
+    try:
+        output = run_git(["-C", str(start_path), "rev-parse", "--show-toplevel"])
+    except SkillLinkError:
+        return None
+    if not output:
+        return None
+    return Path(output).expanduser().resolve()
+
+
+def _strip_git_suffix(path: str) -> str:
+    return path[:-4] if path.endswith(".git") else path
+
+
+def normalize_repo_identifier(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+
+    if "://" not in text and "@" in text and ":" in text:
+        user_host, repo_path = text.split(":", 1)
+        host = user_host.rsplit("@", 1)[-1]
+        return _strip_git_suffix(f"{host}/{repo_path}".rstrip("/")).lower()
+
+    parsed = urlparse(text)
+    if parsed.scheme:
+        if parsed.scheme == "file":
+            return str(Path(unquote(parsed.path)).expanduser().resolve())
+        if parsed.netloc:
+            repo_path = parsed.path.strip("/")
+            host = parsed.netloc.rsplit("@", 1)[-1]
+            return _strip_git_suffix(f"{host}/{repo_path}".rstrip("/")).lower()
+
+    expanded = Path(text).expanduser()
+    if expanded.is_absolute() or text.startswith("."):
+        return str(expanded.resolve())
+
+    normalized = text.rstrip("/")
+    if normalized.count("/") == 1:
+        normalized = f"github.com/{normalized}"
+    return _strip_git_suffix(normalized).lower()
+
+
+def expected_repo_identifiers(repo: str, repo_url: str | None = None) -> set[str]:
+    identifiers = {normalize_repo_identifier(repo)}
+    if repo_url:
+        identifiers.add(normalize_repo_identifier(repo_url))
+    return {item for item in identifiers if item}
+
+
+def repo_remote_urls(repo_dir: Path) -> list[str]:
+    try:
+        remote_names = run_git(["-C", str(repo_dir), "remote"]).splitlines()
+    except SkillLinkError:
+        return []
+
+    urls = []
+    for remote_name in remote_names:
+        if not remote_name.strip():
+            continue
+        try:
+            output = run_git(["-C", str(repo_dir), "remote", "get-url", "--all", remote_name])
+        except SkillLinkError:
+            continue
+        urls.extend(line.strip() for line in output.splitlines() if line.strip())
+    return urls
+
+
+def repo_remote_matches(repo_dir: Path, repo: str, repo_url: str | None = None) -> bool:
+    expected = expected_repo_identifiers(repo, repo_url)
+    actual = {
+        normalize_repo_identifier(remote_url)
+        for remote_url in repo_remote_urls(repo_dir)
+    }
+    return bool(expected.intersection(actual))
 
 
 def validate_relative_path(path: str) -> None:

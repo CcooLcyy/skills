@@ -372,13 +372,152 @@ def _cmd_update(args: argparse.Namespace, dest_root: str) -> int:
     return 1 if errors else 0
 
 
+def _is_interactive() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _append_unique_path(paths: list[Path], seen: set[str], path_text: str | Path | None) -> None:
+    if not path_text:
+        return
+    path = link_ops.expand_path(str(path_text))
+    path_key = str(path)
+    if path_key in seen:
+        return
+    seen.add(path_key)
+    paths.append(path)
+
+
+def _known_repo_candidates(repo: str, state: dict) -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[str] = set()
+    default_repo = state.get("default_repo") or {}
+    _append_unique_path(candidates, seen, default_repo.get("repo_dir"))
+    for entry in (state.get("links") or {}).values():
+        _append_unique_path(candidates, seen, entry.get("repo_dir"))
+    _append_unique_path(candidates, seen, link_ops.default_repo_dir(repo))
+
+    repos_root = link_ops.codex_home() / "skill-repos"
+    if repos_root.is_dir():
+        for child in sorted(repos_root.iterdir(), key=lambda item: item.name):
+            if child.is_dir():
+                _append_unique_path(candidates, seen, child)
+    return candidates
+
+
+def _search_matching_repo_dirs(repo: str, repo_url: str, state: dict) -> list[Path]:
+    matches = []
+    for candidate in _known_repo_candidates(repo, state):
+        if not candidate.is_dir():
+            continue
+        if not (candidate / "skills").is_dir():
+            continue
+        if link_ops.is_git_repo(candidate) and link_ops.repo_remote_matches(candidate, repo, repo_url):
+            matches.append(candidate)
+    return matches
+
+
+def _select_repo_match(matches: list[Path], allow_prompt: bool) -> Path:
+    if not matches:
+        raise link_ops.SkillLinkError("未搜索到与目标远程仓库匹配的本地 skill 仓库")
+    if len(matches) == 1:
+        print(f"已搜索到本地 skill 仓库: {matches[0]}")
+        return matches[0]
+    if not allow_prompt:
+        choices = "\n".join(f"  - {path}" for path in matches)
+        raise link_ops.SkillLinkError(
+            "搜索到多个匹配的本地 skill 仓库，请使用 --repo-dir 明确指定:\n"
+            f"{choices}"
+        )
+
+    print("搜索到多个匹配的本地 skill 仓库:")
+    for index, path in enumerate(matches, start=1):
+        print(f"  {index}. {path}")
+    while True:
+        choice = input("请选择仓库编号: ").strip()
+        if not choice.isdigit():
+            print("请输入数字编号")
+            continue
+        selected_index = int(choice)
+        if 1 <= selected_index <= len(matches):
+            return matches[selected_index - 1]
+        print("编号超出范围")
+
+
+def _prompt_repo_dir(repo: str, repo_url: str) -> Path:
+    while True:
+        raw_path = input("请输入本地 skill 仓库目录: ").strip()
+        if not raw_path:
+            print("路径不能为空")
+            continue
+        repo_dir = link_ops.expand_path(raw_path)
+        if not repo_dir.is_dir():
+            print(f"目录不存在: {repo_dir}")
+            continue
+        if not link_ops.is_git_repo(repo_dir):
+            print(f"目录不是 Git 仓库: {repo_dir}")
+            continue
+        if not link_ops.repo_remote_matches(repo_dir, repo, repo_url):
+            print(f"仓库 remote 未匹配目标仓库: {repo}")
+            continue
+        return repo_dir
+
+
+def _prompt_for_connect_repo_dir(repo: str, repo_url: str, state: dict) -> Path:
+    print(f"当前工作目录未关联目标 skill 仓库: {repo}")
+    while True:
+        print("请选择仓库定位方式:")
+        print("  s) 搜索已登记或默认 skill 仓库目录")
+        print("  p) 手动输入本地 skill 仓库目录")
+        print("  q) 取消")
+        choice = input("选择 [s/p/q]: ").strip().lower()
+        if choice in {"s", "search"}:
+            try:
+                return _select_repo_match(
+                    _search_matching_repo_dirs(repo, repo_url, state),
+                    allow_prompt=True,
+                )
+            except link_ops.SkillLinkError as exc:
+                print(exc)
+                continue
+        if choice in {"p", "path"}:
+            return _prompt_repo_dir(repo, repo_url)
+        if choice in {"q", "quit", "cancel"}:
+            raise link_ops.SkillLinkError("已取消仓库接入")
+        print("无效选择，请输入 s、p 或 q")
+
+
+def _resolve_connect_repo_dir(args: argparse.Namespace, repo: str, repo_url: str, state: dict) -> Path:
+    if args.repo_dir:
+        return link_ops.expand_path(args.repo_dir)
+
+    current_repo = link_ops.git_root(Path.cwd())
+    if current_repo and link_ops.repo_remote_matches(current_repo, repo, repo_url):
+        print(f"已从当前工作目录识别 skill 仓库: {current_repo}")
+        return current_repo
+
+    if args.search_repo_dir:
+        return _select_repo_match(
+            _search_matching_repo_dirs(repo, repo_url, state),
+            allow_prompt=_is_interactive(),
+        )
+
+    if _is_interactive():
+        return _prompt_for_connect_repo_dir(repo, repo_url, state)
+
+    raise link_ops.SkillLinkError(
+        "当前工作目录未关联目标 skill 仓库，且未提供 --repo-dir；"
+        "请在交互式终端选择搜索/输入路径，或使用 --repo-dir/--search-repo-dir 明确仓库位置"
+    )
+
+
 def _cmd_connect(args: argparse.Namespace, dest_root: str) -> int:
     skills_root_path = Path(dest_root)
     link_ops.ensure_dir(skills_root_path)
     state_file = link_ops.state_path(skills_root_path)
     repo = args.repo or link_ops.DEFAULT_REPO
     repo_url = args.repo_url or link_ops.build_repo_url(repo)
-    repo_dir = link_ops.expand_path(args.repo_dir) if args.repo_dir else link_ops.default_repo_dir(repo)
+    state = link_ops.load_state(state_file)
+    repo_dir = _resolve_connect_repo_dir(args, repo, repo_url, state)
 
     if repo_dir.exists():
         if not repo_dir.is_dir():
@@ -402,7 +541,6 @@ def _cmd_connect(args: argparse.Namespace, dest_root: str) -> int:
         )
         action = "已克隆并登记仓库"
 
-    state = link_ops.load_state(state_file)
     state["default_repo"] = link_ops.collect_default_repo_record(repo, repo_dir, args.ref, repo_url)
     link_ops.save_state(state_file, state)
 
@@ -586,6 +724,11 @@ def _build_parser() -> argparse.ArgumentParser:
     connect_parser.add_argument("--repo", default=DEFAULT_REPO, help=f"GitHub 仓库，默认 {DEFAULT_REPO}")
     connect_parser.add_argument("--repo-url", help="显式指定克隆 URL")
     connect_parser.add_argument("--repo-dir", help="本地仓库目录")
+    connect_parser.add_argument(
+        "--search-repo-dir",
+        action="store_true",
+        help="未提供 --repo-dir 时自动搜索已存在的匹配 skill 仓库",
+    )
     connect_parser.add_argument("--ref", default=link_ops.DEFAULT_REF, help=f"分支或标签，默认 {link_ops.DEFAULT_REF}")
     connect_target_group = connect_parser.add_mutually_exclusive_group(required=False)
     connect_target_group.add_argument("--name", help="仅链接指定 skill")

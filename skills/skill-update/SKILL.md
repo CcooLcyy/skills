@@ -45,7 +45,11 @@ description: 用于统一管理 Codex skill 的来源更新、仓库接入与 Gi
 1. 登记或接入仓库
    - 使用 `connect`
    - 默认仓库是 `CcooLcyy/skills`
-   - 默认工作区是 `$CODEX_HOME/skill-repos/CcooLcyy-skills`
+   - 未显式提供 `--repo-dir` 时，先判断当前工作目录所属 Git 仓库的 remote 是否匹配目标 skill 仓库
+   - 若当前工作目录匹配，则直接使用当前仓库继续登记、链接
+   - 若当前工作目录不匹配，交互式终端会要求选择搜索已登记/默认 skill 仓库，或手动输入本地 skill 仓库目录
+   - 非交互环境中必须显式提供 `--repo-dir`，或使用 `--search-repo-dir` 搜索已存在的匹配仓库
+   - 默认工作区仍是 `$CODEX_HOME/skill-repos/CcooLcyy-skills`，但不会在无法确认仓库位置时静默使用
    - 未指定 `--name`、`--all`、`--no-link` 时，默认链接仓库 `skills/` 下全部有效 skill
 2. 查看状态
    - 使用 `status`
@@ -63,6 +67,7 @@ description: 用于统一管理 Codex skill 的来源更新、仓库接入与 Gi
 
 - 接入时只会处理仓库 `skills/` 目录下带 `SKILL.md` 的有效 skill 目录
 - 不会把整个 `~/.codex/skills` 或整个仓库目录做软链
+- 未传 `--repo-dir` 时，只会自动使用 remote 与目标仓库匹配的当前 Git 仓库
 - 创建软链前必须先备份原目标目录，除非目标已经是受管软链
 - 遇到未托管软链时默认停止，不擅自覆盖
 - 接入状态记录保存在 `~/.codex/skills/.dev-links.json`
@@ -75,6 +80,8 @@ description: 用于统一管理 Codex skill 的来源更新、仓库接入与 Gi
 - `python3 $CODEX_HOME/skills/skill-update/scripts/update_skills.py source-list`
 - `python3 $CODEX_HOME/skills/skill-update/scripts/update_skills.py source-add --name git-commit --path skills/git-commit --ref main`
 - `python3 $CODEX_HOME/skills/skill-update/scripts/update_skills.py update --all`
+- `python3 $CODEX_HOME/skills/skill-update/scripts/update_skills.py connect`
+- `python3 $CODEX_HOME/skills/skill-update/scripts/update_skills.py connect --search-repo-dir`
 - `python3 $CODEX_HOME/skills/skill-update/scripts/update_skills.py connect --repo-dir /data/code/skills`
 - `python3 $CODEX_HOME/skills/skill-update/scripts/update_skills.py connect --name git-commit --repo-dir /data/code/skills`
 - `python3 $CODEX_HOME/skills/skill-update/scripts/update_skills.py status --name git-commit`

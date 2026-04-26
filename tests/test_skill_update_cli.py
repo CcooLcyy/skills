@@ -18,11 +18,13 @@ def _run(
     *,
     env: dict[str, str],
     cwd: Path | None = None,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH), *args],
         cwd=str(cwd or REPO_ROOT),
         env=env,
+        input=input_text,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -155,6 +157,107 @@ class SkillUpdateCliTests(unittest.TestCase):
         self._assert_ok(result)
         self.assertTrue((self.skills_root / "alpha").is_dir())
         self.assertEqual((self.skills_root / "alpha" / "before.txt").read_text(encoding="utf-8"), "old\n")
+
+    def test_connect_uses_current_matching_repo_when_repo_dir_omitted(self) -> None:
+        repo = self._create_repo("repo-current", ["alpha"], with_remote=True)
+        remote = self.root / "repo-current-remote.git"
+
+        result = _run(
+            [
+                "connect",
+                "--repo",
+                "local/repo-current",
+                "--repo-url",
+                str(remote),
+                "--name",
+                "alpha",
+            ],
+            env=self.env,
+            cwd=repo / "skills" / "alpha",
+        )
+
+        self._assert_ok(result)
+        self.assertIn("已从当前工作目录识别 skill 仓库", result.stdout)
+        self.assertEqual(
+            os.path.realpath(self.skills_root / "alpha"),
+            str((repo / "skills" / "alpha").resolve()),
+        )
+
+    def test_connect_requires_repo_location_when_current_dir_is_unrelated(self) -> None:
+        unrelated = self.root / "unrelated"
+        unrelated.mkdir()
+
+        result = _run(["connect", "--name", "alpha"], env=self.env, cwd=unrelated)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("当前工作目录未关联目标 skill 仓库", result.stderr)
+        self.assertIn("--repo-dir", result.stderr)
+
+    def test_connect_search_repo_dir_uses_registered_matching_repo(self) -> None:
+        repo = self._create_repo("repo-search", ["alpha"], with_remote=True)
+        remote = self.root / "repo-search-remote.git"
+        unrelated = self.root / "unrelated-search"
+        unrelated.mkdir()
+
+        result = _run(
+            [
+                "connect",
+                "--repo",
+                "local/repo-search",
+                "--repo-url",
+                str(remote),
+                "--repo-dir",
+                str(repo),
+                "--no-link",
+            ],
+            env=self.env,
+        )
+        self._assert_ok(result)
+
+        result = _run(
+            [
+                "connect",
+                "--repo",
+                "local/repo-search",
+                "--repo-url",
+                str(remote),
+                "--search-repo-dir",
+                "--name",
+                "alpha",
+            ],
+            env=self.env,
+            cwd=unrelated,
+        )
+
+        self._assert_ok(result)
+        self.assertIn("已搜索到本地 skill 仓库", result.stdout)
+        self.assertEqual(
+            os.path.realpath(self.skills_root / "alpha"),
+            str((repo / "skills" / "alpha").resolve()),
+        )
+
+    def test_connect_matches_ssh_url_with_username(self) -> None:
+        repo = self._create_repo("repo-ssh", ["alpha"])
+        self._git(repo, "remote", "add", "origin", "ssh://git@github.com/local/repo-ssh.git")
+
+        result = _run(
+            [
+                "connect",
+                "--repo",
+                "local/repo-ssh",
+                "--name",
+                "alpha",
+            ],
+            env=self.env,
+            cwd=repo,
+        )
+
+        self._assert_ok(result)
+        self.assertIn("已从当前工作目录识别 skill 仓库", result.stdout)
+        self.assertEqual(
+            os.path.realpath(self.skills_root / "alpha"),
+            str((repo / "skills" / "alpha").resolve()),
+        )
 
     def test_connect_rejects_unmanaged_symlink_and_allows_managed_relink(self) -> None:
         repo_a = self._create_repo("repo-a", ["alpha"])
