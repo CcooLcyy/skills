@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log() {
+  printf '[{{REPO_SLUG}}-init] %s\n' "$*"
+}
+
+fail() {
+  printf '[{{REPO_SLUG}}-init] 错误：%s\n' "$*" >&2
+  exit 1
+}
+
+link_codex_sync_entry() {
+  local relative_path="$1"
+  local source_path="${CODEX_SYNC_ROOT}/${relative_path}"
+  local target_path="${CODEX_HOME}/${relative_path}"
+
+  [ -e "${source_path}" ] || return 0
+
+  mkdir -p "$(dirname "${target_path}")"
+  rm -rf "${target_path}"
+  ln -s "${source_path}" "${target_path}"
+}
+
+sync_codex_auth() {
+  local source_path="${CODEX_SYNC_ROOT}/auth.json"
+  local target_path="${CODEX_HOME}/auth.json"
+
+  [ -f "${source_path}" ] || return 0
+
+  mkdir -p "${CODEX_HOME}"
+  if [ -L "${target_path}" ]; then
+    rm -f "${target_path}"
+  fi
+
+  if [ ! -f "${target_path}" ] || ! cmp -s "${source_path}" "${target_path}"; then
+    install -m 600 "${source_path}" "${target_path}"
+  fi
+}
+
+prepare_codex_home() {
+  [ -d "${CODEX_SYNC_ROOT}" ] || return 0
+
+  mkdir -p "${CODEX_HOME}"
+  link_codex_sync_entry "config.toml"
+  link_codex_sync_entry "AGENTS.md"
+  link_codex_sync_entry "skills"
+  sync_codex_auth
+  log "已准备 Codex 配置同步：${CODEX_SYNC_ROOT} -> ${CODEX_HOME}"
+}
+
+ensure_safe_directory() {
+  local repo_path="$1"
+
+  [ -d "${repo_path}/.git" ] || return 0
+  if ! git config --global --get-all safe.directory | grep -Fxq "${repo_path}"; then
+    git config --global --add safe.directory "${repo_path}"
+  fi
+}
+
+REPO_ROOT="${REPO_ROOT:-{{CONTAINER_WORKDIR}}}"
+CODEX_HOME="${CODEX_HOME:-/root/.codex}"
+CODEX_SYNC_ROOT="${CODEX_SYNC_ROOT:-/codex-sync}"
+CCACHE_DIR="${CCACHE_DIR:-/root/.cache/ccache}"
+
+export REPO_ROOT CODEX_HOME CODEX_SYNC_ROOT CCACHE_DIR
+
+mkdir -p "${CCACHE_DIR}"
+prepare_codex_home
+ensure_safe_directory "${REPO_ROOT}"
+
+{{CUSTOM_INIT_COMMANDS}}
+
+exec "$@"

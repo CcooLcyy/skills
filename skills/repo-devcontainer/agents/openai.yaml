@@ -1,0 +1,4 @@
+interface:
+  display_name: "仓库开发容器"
+  short_description: "为代码仓库生成可编译的 VS Code Dev Container"
+  default_prompt: "使用 $repo-devcontainer 为这个仓库创建可在 VS Code 和 Codex 中使用的可编译开发容器。"

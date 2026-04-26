@@ -1,0 +1,30 @@
+{
+  "name": "{{REPO_SLUG}} dev",
+  "build": {
+    "context": "..",
+    "dockerfile": "Dockerfile"
+  },
+  "remoteUser": "root",
+  "workspaceMount": "source={{HOST_REPO_ROOT}},target={{CONTAINER_WORKDIR}},type=bind",
+  "workspaceFolder": "{{CONTAINER_WORKDIR}}",
+  "containerEnv": {
+    "REPO_ROOT": "{{CONTAINER_WORKDIR}}",
+    "CCACHE_DIR": "/root/.cache/ccache"
+  },
+  "mounts": [
+    "source={{CODEX_HOME_VOLUME}},target=/root/.codex,type=volume",
+    "source={{HOST_CODEX_ROOT}},target=/codex-sync,type=bind,readonly",
+    "source={{CCACHE_VOLUME}},target=/root/.cache/ccache,type=volume"
+  ],
+  "postCreateCommand": "git config --global --add safe.directory {{CONTAINER_WORKDIR}}",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        {{VSCODE_EXTENSIONS}}
+      ],
+      "settings": {
+        {{VSCODE_SETTINGS}}
+      }
+    }
+  }
+}

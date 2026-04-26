@@ -1,0 +1,4 @@
+interface:
+  display_name: "画图"
+  short_description: "通过自定义 GPT Image API 生成和编辑图片"
+  default_prompt: "使用 $draw-image 通过我提供的 GPT Image base_url 和 API key 生成或编辑图片。"

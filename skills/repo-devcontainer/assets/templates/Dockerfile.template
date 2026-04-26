@@ -1,0 +1,28 @@
+# 模板：使用前替换所有占位符。
+FROM {{BASE_IMAGE}}
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git \
+        curl \
+        build-essential \
+        pkg-config \
+        ccache \
+        {{APT_PACKAGES}} \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /root/.cache/ccache /root/.codex
+
+COPY {{INIT_SCRIPT_REL}} /usr/local/bin/init_{{REPO_SLUG}}_dev.sh
+RUN chmod +x /usr/local/bin/init_{{REPO_SLUG}}_dev.sh
+
+ENV REPO_ROOT={{CONTAINER_WORKDIR}}
+ENV CCACHE_DIR=/root/.cache/ccache
+
+WORKDIR {{CONTAINER_WORKDIR}}
+
+ENTRYPOINT ["/usr/local/bin/init_{{REPO_SLUG}}_dev.sh"]
+CMD ["sleep", "infinity"]

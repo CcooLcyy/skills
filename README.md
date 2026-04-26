@@ -6,6 +6,8 @@
 
 - `git-commit`：整理本地仓库提交流程与提交信息
 - `skill-update`：统一管理技能来源更新、仓库接入与同步
+- `draw-image`：通过自定义 GPT Image API 生成和编辑图片
+- `repo-devcontainer`：为代码仓库生成可编译的 VS Code Dev Container
 - `defuddle`：用 Defuddle CLI 抽取网页正文，优先生成干净的 Markdown
 - `json-canvas`：创建和编辑 Obsidian `.canvas` 文件
 - `obsidian-bases`：创建和编辑 Obsidian `.base` 文件与视图配置
