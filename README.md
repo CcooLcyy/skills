@@ -17,6 +17,8 @@
 - `SKILL.md`
 - 可选的 `scripts/`、`references/`、`assets/`、`agents/`
 
+新增或生成任何 skill 时，必须同时提供对应测试。纯文档型 skill 至少提供结构或内容校验；包含 `scripts/` 的 skill 必须覆盖核心命令或函数行为。测试优先放在 `tests/` 目录，并按现有测试风格命名。
+
 示例结构：
 
 ```text
