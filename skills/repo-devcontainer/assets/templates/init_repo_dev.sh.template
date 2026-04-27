@@ -23,19 +23,7 @@ link_codex_sync_entry() {
 }
 
 sync_codex_auth() {
-  local source_path="${CODEX_SYNC_ROOT}/auth.json"
-  local target_path="${CODEX_HOME}/auth.json"
-
-  [ -f "${source_path}" ] || return 0
-
-  mkdir -p "${CODEX_HOME}"
-  if [ -L "${target_path}" ]; then
-    rm -f "${target_path}"
-  fi
-
-  if [ ! -f "${target_path}" ] || ! cmp -s "${source_path}" "${target_path}"; then
-    install -m 600 "${source_path}" "${target_path}"
-  fi
+  link_codex_sync_entry "auth.json"
 }
 
 prepare_codex_home() {

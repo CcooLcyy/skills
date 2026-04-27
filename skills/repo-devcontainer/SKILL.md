@@ -40,7 +40,7 @@ description: 为已有代码仓库创建、补齐或修复可编译的 VS Code D
 5. 集成 Codex
    - 宿主机 Codex 目录只读挂载到 `/codex-sync`。
    - 容器内 Codex home 使用独立 volume，默认 `/root/.codex`。
-   - 初始化脚本中链接 `config.toml`、`AGENTS.md`、`skills/`，复制 `auth.json`，不要让容器直接写宿主机 Codex 目录。
+   - 初始化脚本中链接 `config.toml`、`auth.json`、`AGENTS.md`、`skills/`，不要让容器直接写宿主机 Codex 目录。
 
 6. 验证
    - 构建镜像并启动容器。

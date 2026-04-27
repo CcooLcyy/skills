@@ -45,6 +45,22 @@ class SkillStructureTests(unittest.TestCase):
         self.assertIn("Docker Socket", references)
         self.assertIn('display_name: "仓库开发容器"', agent)
         self.assertIn("$repo-devcontainer", agent)
+        self.assertIn("链接 `config.toml`、`auth.json`", skill)
+        self.assertNotIn("复制 `auth.json`", skill)
+
+    def test_repo_devcontainer_auth_template_uses_live_link(self) -> None:
+        template = _read(
+            REPO_ROOT
+            / "skills"
+            / "repo-devcontainer"
+            / "assets"
+            / "templates"
+            / "init_repo_dev.sh.template"
+        )
+
+        self.assertIn('link_codex_sync_entry "auth.json"', template)
+        self.assertNotIn("install -m 600", template)
+        self.assertNotIn("cmp -s", template)
 
     def test_repo_devcontainer_templates_keep_required_placeholders(self) -> None:
         template_dir = REPO_ROOT / "skills" / "repo-devcontainer" / "assets" / "templates"
