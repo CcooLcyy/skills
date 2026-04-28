@@ -26,6 +26,7 @@ description: 为已有代码仓库创建、补齐或修复可编译的 VS Code D
 3. 设计容器能力
    - 默认使用目标仓库实际路径做 bind mount，容器内路径默认 `/workspace/<repo-name>`。
    - 如果仓库已有明确路径约定，例如 `/data/code/<repo>`，优先沿用既有约定。
+   - 默认使用 Docker host 网络模式，除非目标仓库或运行环境明确要求隔离网络。
    - 只安装被仓库证据支持的工具链和包管理器。
    - 对大目录和缓存使用 volume，例如 `ccache`、vcpkg root/cache、Conan cache、Cargo registry、Go build cache、npm/pnpm cache、SDK 或交叉工具链输出。
    - 只有仓库构建或打包需要构建镜像时，才挂载 Docker socket。
@@ -74,6 +75,7 @@ description: 为已有代码仓库创建、补齐或修复可编译的 VS Code D
 
 - 创建或修改了哪些文件。
 - 容器名、镜像名、源码挂载路径和容器工作目录。
+- 容器网络模式，默认应为 host。
 - 如何启动容器、如何进入容器、如何用 VS Code 打开。
 - 已执行的验证命令和结果。
 - 哪些能力是按需启用的，例如 vcpkg、Conan、Docker socket、交叉工具链、SDK。

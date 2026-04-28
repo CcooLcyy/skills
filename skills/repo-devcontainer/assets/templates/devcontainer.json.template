@@ -5,6 +5,9 @@
     "dockerfile": "Dockerfile"
   },
   "remoteUser": "root",
+  "runArgs": [
+    "--network=host"
+  ],
   "workspaceMount": "source={{HOST_REPO_ROOT}},target={{CONTAINER_WORKDIR}},type=bind",
   "workspaceFolder": "{{CONTAINER_WORKDIR}}",
   "containerEnv": {

@@ -94,6 +94,7 @@ if [ "${container_exists}" -eq 0 ]; then
     docker run -d
     --name "${CONTAINER_NAME}"
     --hostname "${CONTAINER_NAME}"
+    --network=host
     -w "${CONTAINER_WORKDIR}"
     -v "${HOST_REPO_ROOT}:${CONTAINER_WORKDIR}"
     -v "${CODEX_HOME_VOLUME}:/root/.codex"

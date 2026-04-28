@@ -62,6 +62,15 @@ class SkillStructureTests(unittest.TestCase):
         self.assertNotIn("install -m 600", template)
         self.assertNotIn("cmp -s", template)
 
+    def test_repo_devcontainer_templates_default_to_host_network(self) -> None:
+        template_dir = REPO_ROOT / "skills" / "repo-devcontainer" / "assets" / "templates"
+        start_script = _read(template_dir / "start_repo_dev.sh.template")
+        devcontainer = _read(template_dir / "devcontainer.json.template")
+
+        self.assertIn("--network=host", start_script)
+        self.assertIn('"runArgs"', devcontainer)
+        self.assertIn('"--network=host"', devcontainer)
+
     def test_repo_devcontainer_templates_keep_required_placeholders(self) -> None:
         template_dir = REPO_ROOT / "skills" / "repo-devcontainer" / "assets" / "templates"
         expected = {
