@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 
@@ -70,6 +71,52 @@ class SkillStructureTests(unittest.TestCase):
         self.assertIn("--network=host", start_script)
         self.assertIn('"runArgs"', devcontainer)
         self.assertIn('"--network=host"', devcontainer)
+
+    def test_repo_devcontainer_vscode_extensions_include_codex_prerelease(self) -> None:
+        skill_dir = REPO_ROOT / "skills" / "repo-devcontainer"
+        skill = _read(skill_dir / "SKILL.md")
+        devcontainer = _read(skill_dir / "assets" / "templates" / "devcontainer.json.template")
+        previously_hardcoded_extensions = [
+            "EditorConfig.EditorConfig",
+            "redhat.vscode-yaml",
+            "tamasfe.even-better-toml",
+            "ms-azuretools.vscode-docker",
+        ]
+
+        for extension in previously_hardcoded_extensions:
+            with self.subTest(extension=extension):
+                self.assertNotIn(extension, skill)
+                self.assertNotIn(extension, devcontainer)
+        self.assertIn("openai.chatgpt@prerelease", skill)
+        self.assertIn('"openai.chatgpt@prerelease"', devcontainer)
+        self.assertIn("不要自行决定其他默认 VS Code 扩展", skill)
+        self.assertIn("每一项必须以前置逗号开始", skill)
+        self.assertIn("{{VSCODE_EXTENSIONS}}", devcontainer)
+
+        def render_template(extra_extensions: str) -> dict:
+            rendered = devcontainer.replace("{{VSCODE_EXTENSIONS}}", extra_extensions)
+            rendered = (
+                rendered.replace("{{REPO_SLUG}}", "demo")
+                .replace("{{HOST_REPO_ROOT}}", "/tmp/demo")
+                .replace("{{CONTAINER_WORKDIR}}", "/workspace/demo")
+                .replace("{{CODEX_HOME_VOLUME}}", "demo-codex-home")
+                .replace("{{HOST_CODEX_ROOT}}", "/home/user/.codex")
+                .replace("{{CCACHE_VOLUME}}", "demo-ccache")
+                .replace("{{VSCODE_SETTINGS}}", "")
+            )
+            return json.loads(rendered)
+
+        parsed_without_extra = render_template("")
+        self.assertEqual(
+            ["openai.chatgpt@prerelease"],
+            parsed_without_extra["customizations"]["vscode"]["extensions"],
+        )
+
+        parsed_with_extra = render_template(',\n        "ms-vscode.cpptools"')
+        self.assertEqual(
+            ["openai.chatgpt@prerelease", "ms-vscode.cpptools"],
+            parsed_with_extra["customizations"]["vscode"]["extensions"],
+        )
 
     def test_repo_devcontainer_templates_keep_required_placeholders(self) -> None:
         template_dir = REPO_ROOT / "skills" / "repo-devcontainer" / "assets" / "templates"

@@ -23,6 +23,7 @@
   "customizations": {
     "vscode": {
       "extensions": [
+        "openai.chatgpt@prerelease"
         {{VSCODE_EXTENSIONS}}
       ],
       "settings": {

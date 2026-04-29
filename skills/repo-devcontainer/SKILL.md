@@ -55,7 +55,9 @@ description: 为已有代码仓库创建、补齐或修复可编译的 VS Code D
 - 默认容器名：`<repo-name>-dev`。
 - 默认镜像名：`<repo-name>-dev:ubuntu24.04`，除非仓库需要其他基础系统。
 - 默认远程用户可使用 `root`，因为很多旧仓库和交叉工具链依赖 root 安装路径；如果仓库已有非 root 约定则沿用。
-- `devcontainer.json` 必须让 VS Code 能打开目标仓库，并安装与语言匹配的扩展。
+- `devcontainer.json` 必须让 VS Code 能打开目标仓库，并默认安装 Codex 预发布扩展 `openai.chatgpt@prerelease`。
+- 不要自行决定其他默认 VS Code 扩展；只有用户明确指定，或目标仓库已有配置、文档、语言栈证据支持时，才添加对应扩展。
+- 替换 `{{VSCODE_EXTENSIONS}}` 时只放用户指定或仓库证据支持的额外扩展；没有额外扩展时替换为空，有额外扩展时每一项必须以前置逗号开始，避免破坏默认 Codex 扩展列表。
 - 启动脚本必须支持 `--recreate` 和 `--no-build`。
 - 初始化脚本必须可重复执行，重复启动不能破坏已有缓存和源码。
 - 验证失败时保留已生成文件，说明失败命令和下一步修复点。
